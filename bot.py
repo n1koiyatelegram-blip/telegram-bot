@@ -8,7 +8,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 TOKEN = "8045822374:AAF_n01BMHRuFHSgpPQlf6cfCvyxd5ITuIw"
 ADMIN_ID = 8561804900
 
-# --- Код бота (баны, муты) ---
+# --- Команды бота ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -98,7 +98,7 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
-# --- Веб-сервер для Render (чтобы он не ругался на отсутствие порта) ---
+# --- Веб-сервер для Render ---
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -110,18 +110,21 @@ def run_http_server():
     server.serve_forever()
 
 # --- Запуск ---
-def main():
-    # Запускаем веб-сервер в отдельном потоке
-    Thread(target=run_http_server, daemon=True).start()
-    # Запускаем бота
+async def main():
     app = Application.builder().token(TOKEN).build()
+    # Принудительно завершаем все старые сессии и webhook
+    await app.bot.delete_webhook(drop_pending_updates=True)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
     app.add_handler(CommandHandler("mute", mute))
     app.add_handler(CommandHandler("unmute", unmute))
     print("✅ Бот запущен (бан, разбан, мут, размут)")
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    # Запускаем веб-сервер в фоне
+    Thread(target=run_http_server, daemon=True).start()
+    # Запускаем асинхронную main
+    asyncio.run(main())
