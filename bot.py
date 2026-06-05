@@ -117,22 +117,57 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_warnings(warnings)
 
     if new_count == 1:
-        msg = await update.message.reply_text(
-            "```\n⚠️ ПРЕДУПРЕЖДЕНИЕ 1/3\nСледующее предупреждение повлечёт мут на 30 минут.\n```",
-            parse_mode="Markdown"
+        text = (
+            "```\n"
+            "⚠️ ПРЕДУПРЕЖДЕНИЕ 1/3\n"
+            "Следующее предупреждение повлечёт мут на 30 минут.\n"
+            "```"
         )
+        msg = await update.message.reply_text(text, parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
+
     elif new_count == 2:
-        await apply_mute(update, context, user_id, timedelta(minutes=30),
-                         "⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3")
-        msg = await update.message.reply_text(
-            "```\n⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа.\n```",
-            parse_mode="Markdown"
-        )
-        asyncio.create_task(delete_after(msg))
+        duration = timedelta(minutes=30)
+        until = datetime.utcnow() + duration
+        try:
+            await context.bot.restrict_chat_member(
+                update.effective_chat.id, user_id,
+                ChatPermissions(can_send_messages=False),
+                until_date=until
+            )
+            text = (
+                "```\n"
+                "⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3\n"
+                "🔇 Пользователь замучен на 30 минут.\n"
+                "⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа.\n"
+                "```"
+            )
+            msg = await update.message.reply_text(text, parse_mode="Markdown")
+            asyncio.create_task(delete_after(msg))
+        except Exception as e:
+            msg = await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
+            asyncio.create_task(delete_after(msg))
+
     else:  # new_count >= 3
-        await apply_mute(update, context, user_id, timedelta(hours=2),
-                         "⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ")
+        duration = timedelta(hours=2)
+        until = datetime.utcnow() + duration
+        try:
+            await context.bot.restrict_chat_member(
+                update.effective_chat.id, user_id,
+                ChatPermissions(can_send_messages=False),
+                until_date=until
+            )
+            text = (
+                "```\n"
+                "⚠️⚠️⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ\n"
+                "🔇 Пользователь замучен на 2 часа.\n"
+                "```"
+            )
+            msg = await update.message.reply_text(text, parse_mode="Markdown")
+            asyncio.create_task(delete_after(msg))
+        except Exception as e:
+            msg = await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
+            asyncio.create_task(delete_after(msg))
         # Сбрасываем счётчик
         warnings[chat_id][str(user_id)] = 0
         save_warnings(warnings)
