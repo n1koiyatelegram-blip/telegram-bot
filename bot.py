@@ -6,9 +6,8 @@ from telegram import Update, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = "8924072551:AAF5hfJNcEA4eRxbcM9sa3nt3-SXgZacmCY"
-ADMIN_ID = 8561804900  # ваш Telegram ID
+ADMIN_ID = 8561804900  # ваш ID
 
-# --- Парсинг времени (русские и английские суффиксы) ---
 def parse_duration(duration_str: str):
     if not duration_str:
         return None, "Не указана длительность."
@@ -30,7 +29,6 @@ def parse_duration(duration_str: str):
         return timedelta(weeks=val), f"{val} неделя(ь)"
     return None, "Используйте: 30м, 2ч, 1д, 1нед"
 
-# --- Получение ID пользователя (реплай, @username, прямой ID) ---
 async def resolve_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE, target: str = None):
     if update.message.reply_to_message:
         return update.message.reply_to_message.from_user.id
@@ -45,13 +43,12 @@ async def resolve_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE, ta
                 for admin in admins:
                     if admin.user.username and admin.user.username.lower() == username.lower():
                         return admin.user.id
-                await update.message.reply_text(f"❌ Не найден @{username} (только среди админов).")
+                await update.message.reply_text(f"❌ Не найден @{username}.")
             except Exception as e:
                 await update.message.reply_text(f"Ошибка поиска: {e}")
             return None
     return None
 
-# --- Обработчик всех команд с точкой или слешем ---
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Нет прав.")
@@ -60,7 +57,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # ----- МУТ -----
     if text.startswith(('.мут', '/mute')):
         parts = text.split()
         if len(parts) == 1:
@@ -95,7 +91,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
-    # ----- РАЗМУТ -----
     elif text.startswith(('.размут', '/unmute')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -109,7 +104,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
-    # ----- БАН (навсегда) -----
     elif text.startswith(('.бан', '/ban')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -120,34 +114,29 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
-    # ----- РАЗБАН -----
     elif text.startswith(('.разбан', '/unban')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
         if not uid: return
         try:
             await context.bot.unban_chat_member(update.effective_chat.id, uid)
-            await update.message.reply_text("🟢 Пользователь разбанен (может зайти по ссылке)")
+            await update.message.reply_text("🟢 Пользователь разбанен")
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
-# --- Команда /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
     await update.message.reply_text(
         "✅ Бот-администратор.\n\n"
-        "Команды (с точкой или /):\n"
-        "• .мут 1мин   (ответьте на сообщение)\n"
-        "• .мут @username 2ч\n"
-        "• .размут @username\n"
-        "• .бан @username\n"
-        "• .разбан @username\n\n"
-        "Поддерживается: 1мин, 2ч, 3д, 1нед, 30сек"
+        "Команды:\n"
+        ".мут 1мин (ответом на сообщение)\n"
+        ".размут @username\n"
+        ".бан @username\n"
+        ".разбан @username"
     )
 
-# --- Веб-сервер для Render (чтобы не падал по портам) ---
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -160,17 +149,15 @@ def run_webserver():
     server = HTTPServer(('0.0.0.0', 10000), Handler)
     server.serve_forever()
 
-# --- Запуск ---
 def main():
     Thread(target=run_webserver, daemon=True).start()
     app = Application.builder().token(TOKEN).build()
-    # Сброс вебхука при старте
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    print("✅ Бот успешно запущен. Команды: .мут 1мин (ответом), .размут, .бан, .разбан")
+    print("✅ Бот запущен. Команды: .мут 1мин (ответом), .размут, .бан, .разбан")
     app.run_polling()
 
 if __name__ == "__main__":
