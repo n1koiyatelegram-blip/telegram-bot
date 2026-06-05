@@ -176,15 +176,16 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(delete_after(msg))
 
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Реагируем только на сообщения, начинающиеся с точки и известных команд
+    text = update.message.text.strip()
+    if not text.startswith(('.мут', '.размут', '.бан', '.разбан', '.пред', '.сброс', '.снять_пред')):
+        return  # игнорируем обычные сообщения
+
     if update.effective_user.id != ADMIN_ID:
         msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
-    text = update.message.text.strip()
-    if not text:
-        return
 
-    # Мут
     if text.startswith(('.мут', '/mute')):
         parts = text.split()
         if len(parts) == 1:
@@ -222,7 +223,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
 
-    # Размут
     elif text.startswith(('.размут', '/unmute')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -238,7 +238,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
 
-    # Бан
     elif text.startswith(('.бан', '/ban')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -251,7 +250,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
 
-    # Разбан
     elif text.startswith(('.разбан', '/unban')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -264,11 +262,9 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
 
-    # Предупреждение через точку
     elif text.startswith('.пред'):
         await warn_command(update, context)
 
-    # Сброс через точку
     elif text.startswith(('.сброс', '.снять_пред')):
         parts = text.split()
         if len(parts) > 1:
@@ -279,7 +275,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        # Не-админ: короткое сообщение со ссылкой на владельца
         msg = await update.message.reply_text(
             "```\n"
             "⛔ Нет прав.\n\n"
@@ -289,7 +284,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         asyncio.create_task(delete_after(msg))
         return
-    # Администратор: полное меню
     msg = await update.message.reply_text(
         "```\n"
         "✅ БОТ-АДМИНИСТРАТОР\n\n"
@@ -332,7 +326,7 @@ def main():
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    print("✅ Бот запущен с одним администратором.")
+    print("✅ Бот запущен. Реагирует только на команды с точкой.")
     app.run_polling()
 
 if __name__ == "__main__":
