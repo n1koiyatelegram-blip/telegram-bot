@@ -97,10 +97,13 @@ async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         return False
 
 async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
-        return
+   if update.effective_user.id != ADMIN_ID:
+    msg = await update.message.reply_text(
+        "```\n⛔ (Приват) Нет прав.\n```\n\n[По вопросам](https://t.me/n1koiyaa)",
+        parse_mode="Markdown"
+    )
+    asyncio.create_task(delete_after(msg))
+    return
     if not update.message.reply_to_message:
         msg = await update.message.reply_text("```\n❌ Ответьте на сообщение пользователя.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
