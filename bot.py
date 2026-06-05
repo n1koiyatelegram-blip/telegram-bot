@@ -17,10 +17,11 @@ ADMIN_ID = 8561804900  # ваш Telegram ID
 WARN_FILE = "warnings.json"
 
 # Настройки антиспам-ссылок
-ALLOWED_DOMAINS = []
+ALLOWED_DOMAINS = [
+    't.me', 'telegram.me'
 ]
-BLOCK_SHORT_LINKS = True  # блокировать короткие ссылки (bit.ly и т.д.)
-SHORT_LINK_DOMAINS = ['bit.ly', 'goo.gl', 'tinyurl.com', 'clck.ru', 'shorturl.at', 'ow.ly', 'is.gd', 'buff.ly']
+BLOCK_SHORT_LINKS = True
+SHORT_LINK_DOMAINS = ['bit.ly', 'goo.gl', 'tinyurl.com', 'clck.ru', 'shorturl.at']
 
 # ===== РАБОТА С ПРЕДУПРЕЖДЕНИЯМИ =====
 def load_warnings():
@@ -104,7 +105,6 @@ async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         msg_text = f"```\n{reason}\n🔇 Пользователь замучен на {dur_text}.\n```"
         msg = await update.message.reply_text(msg_text, parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
-        # Лог в ЛС
         user = await context.bot.get_chat(user_id)
         username = f"@{user.username}" if user.username else str(user_id)
         await send_log(context,
@@ -116,9 +116,7 @@ async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         asyncio.create_task(delete_after(msg))
         return False
 
-# ===== ВЫДАЧА ПРЕДУПРЕЖДЕНИЯ ПО ID (для спам-ссылок) =====
 async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, reason: str = ""):
-    """Выдаёт предупреждение пользователю по ID (без ответа на сообщение)."""
     chat_id = update.effective_chat.id
     warnings = load_warnings()
     chat_id_str = str(chat_id)
@@ -157,7 +155,7 @@ async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         except Exception as e:
             await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
         await send_log(context, f"⚠️ Предупреждение 2/3 + мут 30 мин для {user_display}")
-    else:  # new_count >= 3
+    else:
         until = datetime.utcnow() + timedelta(hours=2)
         try:
             await context.bot.restrict_chat_member(
@@ -175,23 +173,18 @@ async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         save_warnings(warnings)
         await send_log(context, f"⚠️ Третье предупреждение + мут 2 часа для {user_display}")
 
-# ===== ЗАЩИТА ОТ СПАМ-ССЫЛОК =====
 def extract_domain(url: str) -> str:
-    """Извлекает домен из URL (без www)."""
     parsed = urlparse(url)
     domain = parsed.netloc or parsed.path
     domain = domain.replace('www.', '').lower()
     return domain
 
 async def handle_spam_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверяет сообщение на нежелательные ссылки, удаляет и выдаёт предупреждение."""
     if not update.message or not update.message.text:
         return
-    # Игнорируем сообщения от самого админа
     if update.effective_user.id == ADMIN_ID:
         return
     text = update.message.text
-    # Ищем URL
     url_pattern = re.compile(r'https?://\S+|www\.\S+')
     urls = url_pattern.findall(text)
     if not urls:
@@ -206,15 +199,13 @@ async def handle_spam_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
             spam = True
             break
     if spam:
-        # Удаляем сообщение
         try:
             await update.message.delete()
         except Exception as e:
             await send_log(context, f"Не удалось удалить сообщение: {e}")
-        # Выдаём предупреждение
         await warn_user_by_id(update, context, update.effective_user.id, reason="Спам-ссылка (запрещённый домен)")
 
-# ===== ОСТАЛЬНЫЕ КОМАНДЫ =====
+# ===== КОМАНДЫ =====
 async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
@@ -338,7 +329,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             username = f"@{user.username}" if user.username else str(uid)
             await send_log(context, f"🔨 Мут для {username} на {dur_text} в чате {update.effective_chat.title}")
             success = True
-
         elif text.startswith(('.размут', '/unmute')):
             parts = text.split()
             uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -353,7 +343,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             username = f"@{user.username}" if user.username else str(uid)
             await send_log(context, f"🔊 Снятие мута с {username} в чате {update.effective_chat.title}")
             success = True
-
         elif text.startswith(('.бан', '/ban')):
             parts = text.split()
             uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -365,7 +354,6 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             username = f"@{user.username}" if user.username else str(uid)
             await send_log(context, f"🔨 Бан {username} в чате {update.effective_chat.title}")
             success = True
-
         elif text.startswith(('.разбан', '/unban')):
             parts = text.split()
             uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -377,11 +365,9 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             username = f"@{user.username}" if user.username else str(uid)
             await send_log(context, f"🟢 Разбан {username} в чате {update.effective_chat.title}")
             success = True
-
         elif text.startswith('.пред'):
             await warn_command(update, context)
             success = True
-
         elif text.startswith(('.сброс', '.снять_пред')):
             parts = text.split()
             if len(parts) > 1:
@@ -390,11 +376,9 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.args = []
             await reset_warns(update, context)
             success = True
-
     except Exception as e:
         msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
-
     if success:
         try:
             await update.message.delete()
@@ -406,7 +390,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text(
             "```\n"
             "⛔ Нет прав.\n\n"
-            "По вопросам: @nikoiyaa\n"
+            "По вопросам: [Мой Telegram](https://t.me/ваш_username)\n"
             "```",
             parse_mode="Markdown"
         )
@@ -430,12 +414,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ЗАЩИТА ОТ СПАМ-ССЫЛОК:\n"
         "Сообщения со ссылками на запрещённые домены удаляются, отправитель получает предупреждение.\n"
         "```\n\n"
-        "[Мой Telegram](https://t.me/n1koiyaa)",
+        "[Мой Telegram](https://t.me/ваш_username)",
         parse_mode="Markdown"
     )
-    # Не удаляем сообщение бота
 
-# ===== ВЕБ-СЕРВЕР ДЛЯ RENDER =====
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -455,9 +437,7 @@ def main():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
-    # Сначала обрабатываем спам-ссылки (чтобы удалить сообщение до обычной обработки)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spam_links), group=1)
-    # Затем обрабатываем команды (мут, пред и т.д.)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command), group=2)
     print("✅ Бот запущен с защитой от спам-ссылок.")
     app.run_polling()
