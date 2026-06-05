@@ -17,10 +17,7 @@ ADMIN_ID = 8561804900  # ваш Telegram ID
 WARN_FILE = "warnings.json"
 
 # Настройки антиспам-ссылок
-ALLOWED_DOMAINS = [
-    'youtube.com', 'youtu.be', 't.me', 'telegram.me', 
-    'instagram.com', 't.co', 'twitter.com', 'x.com',
-    'github.com', 'stackoverflow.com', 'wikipedia.org'
+ALLOWED_DOMAINS = []
 ]
 BLOCK_SHORT_LINKS = True  # блокировать короткие ссылки (bit.ly и т.д.)
 SHORT_LINK_DOMAINS = ['bit.ly', 'goo.gl', 'tinyurl.com', 'clck.ru', 'shorturl.at', 'ow.ly', 'is.gd', 'buff.ly']
