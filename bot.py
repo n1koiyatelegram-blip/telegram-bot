@@ -1,4 +1,6 @@
 import asyncio
+import json
+import os
 from datetime import datetime, timedelta
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -6,7 +8,19 @@ from telegram import Update, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = "8924072551:AAF5hfJNcEA4eRxbcM9sa3nt3-SXgZacmCY"
-ADMIN_ID = 8561804900  # ваш ID
+ADMIN_ID = 8561804900  # ваш Telegram ID
+
+WARN_FILE = "warnings.json"
+
+def load_warnings():
+    if os.path.exists(WARN_FILE):
+        with open(WARN_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_warnings(warnings):
+    with open(WARN_FILE, "w") as f:
+        json.dump(warnings, f, indent=2)
 
 def parse_duration(duration_str: str):
     if not duration_str:
@@ -49,6 +63,83 @@ async def resolve_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE, ta
             return None
     return None
 
+async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, duration: timedelta, reason: str):
+    until = datetime.utcnow() + duration
+    try:
+        await context.bot.restrict_chat_member(
+            update.effective_chat.id, user_id,
+            ChatPermissions(can_send_messages=False),
+            until_date=until
+        )
+        minutes = int(duration.total_seconds() // 60)
+        if minutes == 30:
+            dur_text = "30 минут"
+        elif minutes == 120:
+            dur_text = "2 часа"
+        else:
+            dur_text = f"{minutes} минут"
+        await update.message.reply_text(f"{reason} 🔇 Пользователь замучен на {dur_text}.")
+        return True
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка при муте: {e}")
+        return False
+
+async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ Ответьте на сообщение пользователя.")
+        return
+    user_id = update.message.reply_to_message.from_user.id
+    chat_id = str(update.effective_chat.id)
+
+    warnings = load_warnings()
+    if chat_id not in warnings:
+        warnings[chat_id] = {}
+    current = warnings[chat_id].get(str(user_id), 0)
+    new_count = current + 1
+    warnings[chat_id][str(user_id)] = new_count
+    save_warnings(warnings)
+
+    if new_count == 1:
+        await update.message.reply_text(
+            "⚠️ Предупреждение 1/3.\n"
+            "Следующее предупреждение повлечёт мут на 30 минут."
+        )
+    elif new_count == 2:
+        await apply_mute(update, context, user_id, timedelta(minutes=30),
+                         "⚠️ Предупреждение 2/3.")
+        await update.message.reply_text(
+            "⚠️⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа."
+        )
+    else:  # new_count >= 3
+        await apply_mute(update, context, user_id, timedelta(hours=2),
+                         "⚠️⚠️⚠️ Третье предупреждение.")
+        # Сбрасываем счётчик после третьего предупреждения
+        warnings[chat_id][str(user_id)] = 0
+        save_warnings(warnings)
+
+async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    target = None
+    if len(context.args) > 0:
+        target = context.args[0]
+    user_id = await resolve_user_id(update, context, target)
+    if not user_id:
+        await update.message.reply_text("❌ Укажите пользователя (ответом или @username/ID).")
+        return
+    chat_id = str(update.effective_chat.id)
+    warnings = load_warnings()
+    if chat_id in warnings and str(user_id) in warnings[chat_id]:
+        del warnings[chat_id][str(user_id)]
+        save_warnings(warnings)
+        await update.message.reply_text("✅ Предупреждения сброшены.")
+    else:
+        await update.message.reply_text("❌ У пользователя нет предупреждений.")
+
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Нет прав.")
@@ -57,6 +148,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
+    # Мут
     if text.startswith(('.мут', '/mute')):
         parts = text.split()
         if len(parts) == 1:
@@ -91,6 +183,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
+    # Размут
     elif text.startswith(('.размут', '/unmute')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -104,6 +197,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
+    # Бан
     elif text.startswith(('.бан', '/ban')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -114,6 +208,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
+    # Разбан
     elif text.startswith(('.разбан', '/unban')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
@@ -131,10 +226,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Бот-администратор.\n\n"
         "Команды:\n"
-        ".мут 1мин (ответом на сообщение)\n"
-        ".размут @username\n"
-        ".бан @username\n"
-        ".разбан @username"
+        "• .мут 1мин (ответом)\n"
+        "• .мут @username 2ч\n"
+        "• .размут @username\n"
+        "• .бан @username\n"
+        "• .разбан @username\n"
+        "• .пред (ответом) — выдать предупреждение\n"
+        "• .сброс (или .снять_пред) — сбросить предупреждения\n\n"
+        "Система предупреждений:\n"
+        "1-е — только уведомление\n"
+        "2-е — мут 30 мин\n"
+        "3-е — мут 2 часа, счётчик сбрасывается\n\n"
+        "Форматы времени: 1мин, 2ч, 3д, 1нед, 30сек"
     )
 
 class Handler(BaseHTTPRequestHandler):
@@ -156,8 +259,11 @@ def main():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("пред", warn_command))
+    app.add_handler(CommandHandler("сброс", reset_warns))
+    app.add_handler(CommandHandler("снять_пред", reset_warns))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    print("✅ Бот запущен. Команды: .мут 1мин (ответом), .размут, .бан, .разбан")
+    print("✅ Бот запущен. Система предупреждений активна.")
     app.run_polling()
 
 if __name__ == "__main__":
