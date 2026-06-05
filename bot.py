@@ -8,31 +8,10 @@ from telegram import Update, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = "8924072551:AAF5hfJNcEA4eRxbcM9sa3nt3-SXgZacmCY"
-MASTER_ADMIN_ID = 8561804900  # ваш Telegram ID (владелец)
+ADMIN_ID = 8561804900  # ваш Telegram ID
 
 WARN_FILE = "warnings.json"
-ADMINS_FILE = "admins.json"
 
-# --- Загрузка и сохранение администраторов ---
-def load_admins():
-    if os.path.exists(ADMINS_FILE):
-        with open(ADMINS_FILE, "r") as f:
-            data = json.load(f)
-            return data.get("admins", [])
-    return []
-
-def save_admins(admins):
-    with open(ADMINS_FILE, "w") as f:
-        json.dump({"admins": admins}, f, indent=2)
-
-def is_bot_admin(user_id):
-    # Владелец всегда админ
-    if user_id == MASTER_ADMIN_ID:
-        return True
-    admins = load_admins()
-    return user_id in admins
-
-# --- Загрузка и сохранение предупреждений ---
 def load_warnings():
     if os.path.exists(WARN_FILE):
         with open(WARN_FILE, "r") as f:
@@ -117,9 +96,8 @@ async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         asyncio.create_task(delete_after(msg))
         return False
 
-# --- Предупреждения (доступно админам бота) ---
 async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_bot_admin(update.effective_user.id):
+    if update.effective_user.id != ADMIN_ID:
         msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
@@ -148,53 +126,24 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text(text, parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
     elif new_count == 2:
-        duration = timedelta(minutes=30)
-        until = datetime.utcnow() + duration
-        try:
-            await context.bot.restrict_chat_member(
-                update.effective_chat.id, user_id,
-                ChatPermissions(can_send_messages=False),
-                until_date=until
-            )
-            text = (
-                "```\n"
-                "⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3\n"
-                "🔇 Пользователь замучен на 30 минут.\n"
-                "⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа.\n"
-                "```"
-            )
-            msg = await update.message.reply_text(text, parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
-        except Exception as e:
-            msg = await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
+        await apply_mute(update, context, user_id, timedelta(minutes=30),
+                         "⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3")
+        text = (
+            "```\n"
+            "⚠️⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа.\n"
+            "```"
+        )
+        msg = await update.message.reply_text(text, parse_mode="Markdown")
+        asyncio.create_task(delete_after(msg))
     else:  # new_count >= 3
-        duration = timedelta(hours=2)
-        until = datetime.utcnow() + duration
-        try:
-            await context.bot.restrict_chat_member(
-                update.effective_chat.id, user_id,
-                ChatPermissions(can_send_messages=False),
-                until_date=until
-            )
-            text = (
-                "```\n"
-                "⚠️⚠️⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ\n"
-                "🔇 Пользователь замучен на 2 часа.\n"
-                "```"
-            )
-            msg = await update.message.reply_text(text, parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
-        except Exception as e:
-            msg = await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
+        await apply_mute(update, context, user_id, timedelta(hours=2),
+                         "⚠️⚠️⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ")
         # Сбрасываем счётчик
         warnings[chat_id][str(user_id)] = 0
         save_warnings(warnings)
 
-# --- Сброс предупреждений и снятие мута (доступно админам бота) ---
 async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_bot_admin(update.effective_user.id):
+    if update.effective_user.id != ADMIN_ID:
         msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
@@ -226,70 +175,8 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text("```\n✅ Мут снят (предупреждений не было).\n```", parse_mode="Markdown")
     asyncio.create_task(delete_after(msg))
 
-# --- Управление администраторами бота (только для владельца) ---
-async def add_bot_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != MASTER_ADMIN_ID:
-        msg = await update.message.reply_text("```\n⛔ Только владелец бота может управлять администраторами.\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
-        return
-    if not context.args:
-        msg = await update.message.reply_text("```\n❌ Укажите @username: .админ добавить @username\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
-        return
-    target = context.args[0].strip()
-    user_id = await resolve_user_id(update, context, target)
-    if not user_id:
-        return
-    admins = load_admins()
-    if user_id in admins:
-        msg = await update.message.reply_text(f"```\n❌ @{target} уже администратор.\n```", parse_mode="Markdown")
-    else:
-        admins.append(user_id)
-        save_admins(admins)
-        msg = await update.message.reply_text(f"```\n✅ Администратор @{target} добавлен.\n```", parse_mode="Markdown")
-    asyncio.create_task(delete_after(msg))
-
-async def remove_bot_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != MASTER_ADMIN_ID:
-        msg = await update.message.reply_text("```\n⛔ Только владелец бота может управлять администраторами.\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
-        return
-    if not context.args:
-        msg = await update.message.reply_text("```\n❌ Укажите @username: .админ удалить @username\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
-        return
-    target = context.args[0].strip()
-    user_id = await resolve_user_id(update, context, target)
-    if not user_id:
-        return
-    admins = load_admins()
-    if user_id not in admins:
-        msg = await update.message.reply_text(f"```\n❌ @{target} не является администратором.\n```", parse_mode="Markdown")
-    else:
-        admins.remove(user_id)
-        save_admins(admins)
-        msg = await update.message.reply_text(f"```\n✅ Администратор @{target} удалён.\n```", parse_mode="Markdown")
-    asyncio.create_task(delete_after(msg))
-
-async def list_bot_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != MASTER_ADMIN_ID:
-        msg = await update.message.reply_text("```\n⛔ Только владелец бота может смотреть список администраторов.\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
-        return
-    admins = load_admins()
-    if not admins:
-        text = "```\nСписок администраторов бота пуст.\n```"
-    else:
-        lines = ["Список администраторов бота (ID):"]
-        for aid in admins:
-            lines.append(f"- `{aid}`")
-        text = "```\n" + "\n".join(lines) + "\n```"
-    msg = await update.message.reply_text(text, parse_mode="Markdown")
-    asyncio.create_task(delete_after(msg))
-
-# --- Основной обработчик команд (мут, размут, бан, разбан, админ-команды) ---
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_bot_admin(update.effective_user.id):
+    if update.effective_user.id != ADMIN_ID:
         msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
@@ -381,9 +268,8 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text.startswith('.пред'):
         await warn_command(update, context)
 
-    # Сброс предупреждений через точку
+    # Сброс через точку
     elif text.startswith(('.сброс', '.снять_пред')):
-        # Передаём аргументы в reset_warns
         parts = text.split()
         if len(parts) > 1:
             context.args = parts[1:]
@@ -391,33 +277,9 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.args = []
         await reset_warns(update, context)
 
-    # Добавление администратора бота (только для владельца)
-    elif text.startswith('.админ добавить'):
-        parts = text.split()
-        if len(parts) > 2:
-            context.args = [parts[2]]
-        else:
-            context.args = []
-        await add_bot_admin(update, context)
-
-    # Удаление администратора бота
-    elif text.startswith('.админ удалить'):
-        parts = text.split()
-        if len(parts) > 2:
-            context.args = [parts[2]]
-        else:
-            context.args = []
-        await remove_bot_admin(update, context)
-
-    # Список администраторов бота
-    elif text.startswith('.админ список'):
-        await list_bot_admins(update, context)
-
-# --- Команда /start (для всех: для не-админов — ссылка на владельца, для админов — подробное меню) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_bot_admin(user_id):
-        # Не-админ: показываем короткое сообщение со ссылкой на владельца
+    if update.effective_user.id != ADMIN_ID:
+        # Не-админ: короткое сообщение со ссылкой на владельца
         msg = await update.message.reply_text(
             "```\n"
             "⛔ Нет прав.\n\n"
@@ -427,10 +289,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         asyncio.create_task(delete_after(msg))
         return
-    # Администратор бота: полное меню
+    # Администратор: полное меню
     msg = await update.message.reply_text(
         "```\n"
-        "✅ Ищю тебя / хелпер\n\n"
+        "✅ БОТ-АДМИНИСТРАТОР\n\n"
         "Команды (с точкой):\n"
         "• .мут 1мин (ответом)\n"
         "• .мут @username 2ч\n"
@@ -444,14 +306,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2-е — мут 30 мин\n"
         "3-е — мут 2 часа + сброс\n\n"
         "Сообщения бота удаляются через 40 сек.\n"
-        "```\n\n"  # закрыли блок кода
-        "[Связь](https://t.me/n1koiyaa)",  # <--- добавьте эту строку
+        "```\n\n"
+        "[Мой Telegram](https://t.me/ваш_username)",
         parse_mode="Markdown"
     )
     asyncio.create_task(delete_after(msg))
 
-
-# --- Веб-сервер для Render ---
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -472,7 +332,7 @@ def main():
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    print("✅ Бот запущен с поддержкой нескольких администраторов.")
+    print("✅ Бот запущен с одним администратором.")
     app.run_polling()
 
 if __name__ == "__main__":
