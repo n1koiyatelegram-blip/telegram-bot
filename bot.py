@@ -126,13 +126,13 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await apply_mute(update, context, user_id, timedelta(minutes=30),
                          "⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3")
         msg = await update.message.reply_text(
-            "```\n⚠️⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа.\n```",
+            "```\n⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа.\n```",
             parse_mode="Markdown"
         )
         asyncio.create_task(delete_after(msg))
     else:  # new_count >= 3
         await apply_mute(update, context, user_id, timedelta(hours=2),
-                         "⚠️⚠️⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ")
+                         "⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ")
         # Сбрасываем счётчик
         warnings[chat_id][str(user_id)] = 0
         save_warnings(warnings)
@@ -279,7 +279,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     msg = await update.message.reply_text(
         "```\n"
-        "✅ БОТ-АДМИНИСТРАТОР\n\n"
+        "✅ Создатель - @n1koiyaa \n\n"
         "Команды (с точкой):\n"
         "• .мут 1мин (ответом)\n"
         "• .мут @username 2ч\n"
