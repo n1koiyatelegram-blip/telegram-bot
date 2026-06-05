@@ -279,7 +279,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     msg = await update.message.reply_text(
         "```\n"
-        "✅ Создатель - @n1koiyaa \n\n"
+        "✅ Ищю тебя / хелпер\n\n"
         "Команды (с точкой):\n"
         "• .мут 1мин (ответом)\n"
         "• .мут @username 2ч\n"
@@ -293,7 +293,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2-е — мут 30 мин\n"
         "3-е — мут 2 часа + сброс\n\n"
         "Сообщения бота удаляются через 40 сек.\n"
-        "```",
+        "```\n\n"  # закрыли блок кода
+        "[Связь](https://t.me/n1koiyaa)",  # <--- добавьте эту строку
         parse_mode="Markdown"
     )
     asyncio.create_task(delete_after(msg))
