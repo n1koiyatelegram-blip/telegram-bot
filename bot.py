@@ -8,7 +8,7 @@ from telegram import Update, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = "8924072551:AAF5hfJNcEA4eRxbcM9sa3nt3-SXgZacmCY"
-ADMIN_ID = 8561804900  # ваш Telegram ID
+ADMIN_ID = 8561804900
 
 WARN_FILE = "warnings.json"
 
@@ -57,7 +57,7 @@ async def resolve_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE, ta
                 for admin in admins:
                     if admin.user.username and admin.user.username.lower() == username.lower():
                         return admin.user.id
-                await update.message.reply_text(f"❌ Не найден @{username}.")
+                await update.message.reply_text(f"❌ Не найден @{username} (только среди админов).")
             except Exception as e:
                 await update.message.reply_text(f"Ошибка поиска: {e}")
             return None
@@ -89,7 +89,7 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Нет прав.")
         return
     if not update.message.reply_to_message:
-        await update.message.reply_text("❌ Ответьте на сообщение пользователя.")
+        await update.message.reply_text("❌ Ответьте на сообщение пользователя, которому хотите выдать предупреждение.")
         return
     user_id = update.message.reply_to_message.from_user.id
     chat_id = str(update.effective_chat.id)
@@ -129,14 +129,14 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = context.args[0]
     user_id = await resolve_user_id(update, context, target)
     if not user_id:
-        await update.message.reply_text("❌ Укажите пользователя (ответом или @username/ID).")
+        await update.message.reply_text("❌ Укажите пользователя (ответом на сообщение или @username/ID).")
         return
     chat_id = str(update.effective_chat.id)
     warnings = load_warnings()
     if chat_id in warnings and str(user_id) in warnings[chat_id]:
         del warnings[chat_id][str(user_id)]
         save_warnings(warnings)
-        await update.message.reply_text("✅ Предупреждения сброшены.")
+        await update.message.reply_text("✅ Предупреждения для пользователя сброшены.")
     else:
         await update.message.reply_text("❌ У пользователя нет предупреждений.")
 
@@ -146,6 +146,14 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = update.message.text.strip()
     if not text:
+        return
+
+    # Обработка .пред и .сброс через единый обработчик
+    if text.startswith(('.пред', '/пред')):
+        await warn_command(update, context)
+        return
+    if text.startswith(('.сброс', '.снять_пред', '/сброс', '/снять_пред')):
+        await reset_warns(update, context)
         return
 
     # Мут
@@ -215,7 +223,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not uid: return
         try:
             await context.bot.unban_chat_member(update.effective_chat.id, uid)
-            await update.message.reply_text("🟢 Пользователь разбанен")
+            await update.message.reply_text("🟢 Пользователь разбанен (может зайти по ссылке)")
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
@@ -225,14 +233,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "✅ Бот-администратор.\n\n"
-        "Команды:\n"
-        "• .мут 1мин (ответом)\n"
+        "Команды (с точкой или /):\n"
+        "• .мут 1мин   (ответьте на сообщение)\n"
         "• .мут @username 2ч\n"
         "• .размут @username\n"
         "• .бан @username\n"
         "• .разбан @username\n"
-        "• .пред (ответом) — выдать предупреждение\n"
-        "• .сброс (или .снять_пред) — сбросить предупреждения\n\n"
+        "• .пред        (ответьте на сообщение) — система предупреждений\n"
+        "• .сброс или .снять_пред @username — сбросить предупреждения\n\n"
         "Система предупреждений:\n"
         "1-е — только уведомление\n"
         "2-е — мут 30 мин\n"
@@ -259,11 +267,9 @@ def main():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("пред", warn_command))
-    app.add_handler(CommandHandler("сброс", reset_warns))
-    app.add_handler(CommandHandler("снять_пред", reset_warns))
+    # Все текстовые сообщения обрабатываются handle_command (включая .пред, .сброс, .мут и т.д.)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    print("✅ Бот запущен. Система предупреждений активна.")
+    print("✅ Бот запущен с системой предупреждений (только точка и слеш для /start)")
     app.run_polling()
 
 if __name__ == "__main__":
