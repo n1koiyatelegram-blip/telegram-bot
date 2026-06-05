@@ -6,42 +6,31 @@ from telegram import Update, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = "8045822374:AAFPvLyjwCdPndVDomcN_plp-_mhxkHgIww"
+ADMIN_ID = 8561804900  # ваш числовой ID
 
-# --- Проверка админа с логами ---
-async def is_chat_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        is_admin = member.status in ('administrator', 'creator')
-        print(f"[DEBUG] Чат {chat_id}, user {user_id}, статус {member.status}, is_admin={is_admin}")
-        return is_admin
-    except Exception as e:
-        print(f"[DEBUG] Ошибка проверки админа: {e}")
-        return False
-
-# --- Парсинг длительности ---
+# --- Парсинг длительности (русские и английские суффиксы) ---
 def parse_duration(duration_str: str):
     if not duration_str:
         return None, "Не указана длительность."
-    duration_str = duration_str.lower().strip()
-    if any(duration_str.endswith(s) for s in ('h', 'ч', 'час', 'часа', 'часов')):
-        val = int(''.join(filter(str.isdigit, duration_str)))
+    s = duration_str.lower().strip()
+    if any(s.endswith(x) for x in ('h', 'ч', 'час', 'часа', 'часов')):
+        val = int(''.join(filter(str.isdigit, s)))
         return timedelta(hours=val), f"{val} час(ов)"
-    if any(duration_str.endswith(s) for s in ('m', 'мин', 'минута', 'минуты', 'минут')):
-        val = int(''.join(filter(str.isdigit, duration_str)))
+    if any(s.endswith(x) for x in ('m', 'мин', 'минута', 'минуты', 'минут')):
+        val = int(''.join(filter(str.isdigit, s)))
         return timedelta(minutes=val), f"{val} минут"
-    if any(duration_str.endswith(s) for s in ('s', 'сек', 'секунда', 'секунды', 'секунд')):
-        val = int(''.join(filter(str.isdigit, duration_str)))
+    if any(s.endswith(x) for x in ('s', 'сек', 'секунда', 'секунды', 'секунд')):
+        val = int(''.join(filter(str.isdigit, s)))
         return timedelta(seconds=val), f"{val} секунд"
-    if any(duration_str.endswith(s) for s in ('d', 'д', 'дн', 'дня', 'дней')):
-        val = int(''.join(filter(str.isdigit, duration_str)))
+    if any(s.endswith(x) for x in ('d', 'д', 'дн', 'дня', 'дней')):
+        val = int(''.join(filter(str.isdigit, s)))
         return timedelta(days=val), f"{val} день(дней)"
-    if any(duration_str.endswith(s) for s in ('w', 'нед', 'неделя', 'недели', 'недель')):
-        val = int(''.join(filter(str.isdigit, duration_str)))
+    if any(s.endswith(x) for x in ('w', 'нед', 'неделя', 'недели', 'недель')):
+        val = int(''.join(filter(str.isdigit, s)))
         return timedelta(weeks=val), f"{val} неделя(ь)"
-    return None, "Используйте: 30m (мин), 2h (ч), 1d (д), 1w (нед). Пример: .мут 1мин"
+    return None, "Используйте: 30м, 2ч, 1д, 1нед. Пример: .мут 1мин"
 
+# --- Получение user_id (реплай / ID / @username среди админов) ---
 async def resolve_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE, target: str = None):
     if update.message.reply_to_message:
         return update.message.reply_to_message.from_user.id
@@ -52,53 +41,52 @@ async def resolve_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE, ta
         if target.startswith('@'):
             username = target[1:]
             try:
-                chat = update.effective_chat
-                admins = await context.bot.get_chat_administrators(chat.id)
+                admins = await context.bot.get_chat_administrators(update.effective_chat.id)
                 for admin in admins:
                     if admin.user.username and admin.user.username.lower() == username.lower():
                         return admin.user.id
-                await update.message.reply_text(f"❌ Не найден @{username}.")
-                return None
+                await update.message.reply_text(f"❌ Не найден @{username} (возможно, не админ или не писал в чат).")
             except Exception as e:
                 await update.message.reply_text(f"Ошибка поиска: {e}")
-                return None
+            return None
     return None
 
+# --- Обработчик команд ---
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"[DEBUG] Получено сообщение: {update.message.text} от user {update.effective_user.id}")
-    if not await is_chat_admin(update, context):
-        await update.message.reply_text("⛔ Только администраторы чата могут использовать команды.")
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет прав.")
         return
+
     text = update.message.text.strip()
-    
+
     # МУТ
     if text.startswith(('.мут', '/mute')):
         parts = text.split()
         if len(parts) == 1:
-            user_id = await resolve_user_id(update, context)
-            if not user_id: return
-            duration = "1h"
+            uid = await resolve_user_id(update, context)
+            if not uid: return
+            dur = "1h"
         elif len(parts) == 2:
-            if any(parts[1].endswith(suf) for suf in ('h','m','s','d','w','ч','мин','сек','д','нед')):
-                user_id = await resolve_user_id(update, context)
-                if not user_id: return
-                duration = parts[1]
+            if any(parts[1].endswith(x) for x in ('h','m','s','d','w','ч','мин','сек','д','нед')):
+                uid = await resolve_user_id(update, context)
+                if not uid: return
+                dur = parts[1]
             else:
-                user_id = await resolve_user_id(update, context, parts[1])
-                if not user_id: return
-                duration = "1h"
+                uid = await resolve_user_id(update, context, parts[1])
+                if not uid: return
+                dur = "1h"
         else:
-            user_id = await resolve_user_id(update, context, parts[1])
-            if not user_id: return
-            duration = parts[2]
-        delta, dur_text = parse_duration(duration)
+            uid = await resolve_user_id(update, context, parts[1])
+            if not uid: return
+            dur = parts[2]
+        delta, dur_text = parse_duration(dur)
         if delta is None:
             await update.message.reply_text(f"❌ {dur_text}")
             return
         until = datetime.utcnow() + delta
         try:
             await context.bot.restrict_chat_member(
-                update.effective_chat.id, user_id,
+                update.effective_chat.id, uid,
                 ChatPermissions(can_send_messages=False),
                 until_date=until
             )
@@ -109,24 +97,24 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # РАЗМУТ
     elif text.startswith(('.размут', '/unmute')):
         parts = text.split()
-        user_id = await resolve_user_id(update, context, parts[1] if len(parts) > 1 else None)
-        if not user_id: return
+        uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
+        if not uid: return
         try:
             await context.bot.restrict_chat_member(
-                update.effective_chat.id, user_id,
+                update.effective_chat.id, uid,
                 ChatPermissions(can_send_messages=True)
             )
             await update.message.reply_text("🔊 Пользователь размучен")
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
-    # БАН
+    # БАН (навсегда)
     elif text.startswith(('.бан', '/ban')):
         parts = text.split()
-        user_id = await resolve_user_id(update, context, parts[1] if len(parts) > 1 else None)
-        if not user_id: return
+        uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
+        if not uid: return
         try:
-            await context.bot.ban_chat_member(update.effective_chat.id, user_id, revoke_messages=True)
+            await context.bot.ban_chat_member(update.effective_chat.id, uid, revoke_messages=True)
             await update.message.reply_text("🔨 Пользователь забанен навсегда")
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
@@ -134,29 +122,30 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # РАЗБАН
     elif text.startswith(('.разбан', '/unban')):
         parts = text.split()
-        user_id = await resolve_user_id(update, context, parts[1] if len(parts) > 1 else None)
-        if not user_id: return
+        uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
+        if not uid: return
         try:
-            await context.bot.unban_chat_member(update.effective_chat.id, user_id)
+            await context.bot.unban_chat_member(update.effective_chat.id, uid)
             await update.message.reply_text("🟢 Пользователь разбанен (может зайти по ссылке)")
         except Exception as e:
             await update.message.reply_text(f"Ошибка: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_chat_admin(update, context):
-        await update.message.reply_text("⛔ Только администраторы чата могут использовать бота.")
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет прав.")
         return
     await update.message.reply_text(
         "✅ Бот-администратор.\n\n"
-        "Команды (с точкой или слешем):\n"
-        "• .мут [@username/ID] [время]  — время: 1m (1мин), 2h (2ч), 1d (1д), 1w (1нед)\n"
-        "• .размут [@username/ID]       — по реплаю или @\n"
-        "• .бан [@username/ID]          — навсегда\n"
-        "• .разбан [@username/ID]\n"
-        "Примеры: .мут 1мин, .мут @user 2ч, ответом .мут 30сек"
+        "Команды (с точкой или /):\n"
+        "• .мут 1мин           (ответом на сообщение)\n"
+        "• .мут @username 2ч\n"
+        "• .размут @username\n"
+        "• .бан @username\n"
+        "• .разбан @username\n"
+        "Поддерживается: 1мин, 2ч, 3д, 1нед, 30сек"
     )
 
-# --- Веб-сервер ---
+# --- Веб-сервер для Render (чтобы не ругался на порт) ---
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -177,7 +166,7 @@ def main():
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    print("✅ Бот запущен (команды доступны всем администраторам чата)")
+    print("✅ Бот запущен. Администратор: один (указан в ADMIN_ID).")
     app.run_polling()
 
 if __name__ == "__main__":
