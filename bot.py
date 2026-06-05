@@ -23,6 +23,7 @@ def save_warnings(warnings):
         json.dump(warnings, f, indent=2)
 
 def parse_duration(duration_str: str):
+    # ... (без изменений, как в предыдущем коде)
     if not duration_str:
         return None, "Не указана длительность."
     s = duration_str.lower().strip()
@@ -138,7 +139,6 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:  # new_count >= 3
         await apply_mute(update, context, user_id, timedelta(hours=2),
                          "⚠️⚠️⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ")
-        # Сбрасываем счётчик
         warnings[chat_id][str(user_id)] = 0
         save_warnings(warnings)
 
@@ -156,7 +156,6 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(delete_after(msg))
         return
     chat_id = update.effective_chat.id
-    # Снимаем мут
     try:
         await context.bot.restrict_chat_member(
             chat_id, user_id,
@@ -164,7 +163,6 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception:
         pass
-    # Сбрасываем счётчик
     warnings = load_warnings()
     chat_id_str = str(chat_id)
     if chat_id_str in warnings and str(user_id) in warnings[chat_id_str]:
@@ -176,16 +174,22 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(delete_after(msg))
 
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Реагируем только на сообщения, начинающиеся с точки и известных команд
     text = update.message.text.strip()
     if not text.startswith(('.мут', '.размут', '.бан', '.разбан', '.пред', '.сброс', '.снять_пред')):
-        return  # игнорируем обычные сообщения
+        return
 
     if update.effective_user.id != ADMIN_ID:
         msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
 
+    # Удаляем сообщение пользователя с командой (если есть права)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass  # если нет прав на удаление — просто игнорируем
+
+    # Обработка команд (код тот же, что и раньше)
     if text.startswith(('.мут', '/mute')):
         parts = text.split()
         if len(parts) == 1:
@@ -289,10 +293,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ БОТ-АДМИНИСТРАТОР\n\n"
         "Команды (с точкой):\n"
         "• .мут 1мин (ответом)\n"
-        "• .мут @username 2ч\n"
-        "• .размут @username\n"
-        "• .бан @username\n"
-        "• .разбан @username\n"
+        "• .размут (ответом)\n"
+        "• .бан (ответом)\n"
+        "• .разбан (ответом)\n"
         "• .пред (ответом) — предупреждения\n"
         "• .сброс / .снять_пред — сброс и снятие мута\n\n"
         "СИСТЕМА ПРЕДУПРЕЖДЕНИЙ:\n"
@@ -326,7 +329,7 @@ def main():
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    print("✅ Бот запущен. Реагирует только на команды с точкой.")
+    print("✅ Бот запущен. Сообщения с командами удаляются.")
     app.run_polling()
 
 if __name__ == "__main__":
