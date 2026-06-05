@@ -4,7 +4,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-TOKEN = "8045822374:AAGNjQ3gUDk6B5ZAwU8uHOlt2Ixx99LMnDI"
+TOKEN = "8924072551:AAF5hfJNcEA4eRxbcM9sa3nt3-SXgZacmCY"
 ADMIN_ID = 8561804900  # ваш ID
 
 # Команда /test – отвечает в любом чате (даже без проверки админа)
