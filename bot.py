@@ -1,14 +1,14 @@
-import os
+import asyncio
 from datetime import datetime, timedelta
-from telegram import Update, ChatPermissions
-from telegram.ext import Application, CommandHandler, ContextTypes
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from telegram import Update, ChatPermissions
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-TOKEN = "8045822374:AAF_n01BMHRuFHSgpPQlf6cfCvyxd5ITuIw"
+TOKEN = "8045822374:AAFPvLyjwCdPndVDomcN_plp-_mhxkHgIww"
 ADMIN_ID = 8561804900
 
-# --- Команды бота ---
+# --- Команды ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -22,7 +22,7 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = int(context.args[0])
     except:
-        await update.message.reply_text("ID числом")
+        await update.message.reply_text("ID должен быть числом")
         return
     try:
         await context.bot.ban_chat_member(update.effective_chat.id, user_id)
@@ -98,33 +98,42 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
-# --- Веб-сервер для Render ---
+# --- Веб-сервер для Render (чтоб не ругался на порты) ---
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass  # заглушаем логи
 
-def run_http_server():
+def run_webserver():
     server = HTTPServer(('0.0.0.0', 10000), Handler)
     server.serve_forever()
 
 # --- Запуск ---
-async def main():
+def main():
+    # Запускаем веб-сервер в фоновом потоке
+    Thread(target=run_webserver, daemon=True).start()
+    
+    # Создаём приложение
     app = Application.builder().token(TOKEN).build()
-    # Принудительно завершаем все старые сессии и webhook
-    await app.bot.delete_webhook(drop_pending_updates=True)
+    
+    # Добавляем обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
     app.add_handler(CommandHandler("mute", mute))
     app.add_handler(CommandHandler("unmute", unmute))
+    
+    # Убиваем все старые webhook и сессии (чтобы не было конфликта)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
+    
     print("✅ Бот запущен (бан, разбан, мут, размут)")
-    await app.run_polling()
+    # Запускаем polling (в этом же цикле)
+    app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    # Запускаем веб-сервер в фоне
-    Thread(target=run_http_server, daemon=True).start()
-    # Запускаем асинхронную main
-    asyncio.run(main())
+    main()
