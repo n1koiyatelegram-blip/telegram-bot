@@ -57,10 +57,10 @@ async def resolve_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE, ta
                 for admin in admins:
                     if admin.user.username and admin.user.username.lower() == username.lower():
                         return admin.user.id
-                msg = await update.message.reply_text(f"❌ Не найден @{username}.")
+                msg = await update.message.reply_text(f"```\n❌ Не найден @{username}.\n```", parse_mode="Markdown")
                 asyncio.create_task(delete_after(msg))
             except Exception as e:
-                msg = await update.message.reply_text(f"Ошибка поиска: {e}")
+                msg = await update.message.reply_text(f"```\n❌ Ошибка поиска: {e}\n```", parse_mode="Markdown")
                 asyncio.create_task(delete_after(msg))
             return None
     return None
@@ -87,21 +87,22 @@ async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
             dur_text = "2 часа"
         else:
             dur_text = f"{minutes} минут"
-        msg = await update.message.reply_text(f"{reason} 🔇 Пользователь замучен на {dur_text}.")
+        msg_text = f"```\n{reason}\n🔇 Пользователь замучен на {dur_text}.\n```"
+        msg = await update.message.reply_text(msg_text, parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return True
     except Exception as e:
-        msg = await update.message.reply_text(f"Ошибка при муте: {e}")
+        msg = await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return False
 
 async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text("⛔ Нет прав.")
+        msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
     if not update.message.reply_to_message:
-        msg = await update.message.reply_text("❌ Ответьте на сообщение пользователя.")
+        msg = await update.message.reply_text("```\n❌ Ответьте на сообщение пользователя.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
     user_id = update.message.reply_to_message.from_user.id
@@ -117,27 +118,28 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if new_count == 1:
         msg = await update.message.reply_text(
-            "⚠️ Предупреждение 1/3.\n"
-            "Следующее предупреждение повлечёт мут на 30 минут."
+            "```\n⚠️ ПРЕДУПРЕЖДЕНИЕ 1/3\nСледующее предупреждение повлечёт мут на 30 минут.\n```",
+            parse_mode="Markdown"
         )
         asyncio.create_task(delete_after(msg))
     elif new_count == 2:
         await apply_mute(update, context, user_id, timedelta(minutes=30),
-                         "⚠️ Предупреждение 2/3.")
+                         "⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3")
         msg = await update.message.reply_text(
-            "⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа."
+            "```\n⚠️⚠️ При следующем (третьем) предупреждении будет выдан мут на 2 часа.\n```",
+            parse_mode="Markdown"
         )
         asyncio.create_task(delete_after(msg))
     else:  # new_count >= 3
         await apply_mute(update, context, user_id, timedelta(hours=2),
-                         "⚠️ Третье предупреждение.")
+                         "⚠️⚠️⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ")
         # Сбрасываем счётчик
         warnings[chat_id][str(user_id)] = 0
         save_warnings(warnings)
 
 async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text("⛔ Нет прав.")
+        msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
     target = None
@@ -145,23 +147,32 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = context.args[0]
     user_id = await resolve_user_id(update, context, target)
     if not user_id:
-        msg = await update.message.reply_text("❌ Укажите пользователя (ответом или @username/ID).")
+        msg = await update.message.reply_text("```\n❌ Укажите пользователя (ответом или @username/ID).\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
-    chat_id = str(update.effective_chat.id)
+    chat_id = update.effective_chat.id
+    # Снимаем мут
+    try:
+        await context.bot.restrict_chat_member(
+            chat_id, user_id,
+            ChatPermissions(can_send_messages=True)
+        )
+    except Exception:
+        pass
+    # Сбрасываем счётчик
     warnings = load_warnings()
-    if chat_id in warnings and str(user_id) in warnings[chat_id]:
-        del warnings[chat_id][str(user_id)]
+    chat_id_str = str(chat_id)
+    if chat_id_str in warnings and str(user_id) in warnings[chat_id_str]:
+        del warnings[chat_id_str][str(user_id)]
         save_warnings(warnings)
-        msg = await update.message.reply_text("✅ Предупреждения сброшены.")
-        asyncio.create_task(delete_after(msg))
+        msg = await update.message.reply_text("```\n✅ Предупреждения сброшены, мут снят.\n```", parse_mode="Markdown")
     else:
-        msg = await update.message.reply_text("❌ У пользователя нет предупреждений.")
-        asyncio.create_task(delete_after(msg))
+        msg = await update.message.reply_text("```\n✅ Мут снят (предупреждений не было).\n```", parse_mode="Markdown")
+    asyncio.create_task(delete_after(msg))
 
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text("⛔ Нет прав.")
+        msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
     text = update.message.text.strip()
@@ -190,7 +201,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             dur = parts[2]
         delta, dur_text = parse_duration(dur)
         if delta is None:
-            msg = await update.message.reply_text(f"❌ {dur_text}")
+            msg = await update.message.reply_text(f"```\n❌ {dur_text}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
             return
         until = datetime.utcnow() + delta
@@ -200,10 +211,10 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ChatPermissions(can_send_messages=False),
                 until_date=until
             )
-            msg = await update.message.reply_text(f"🔇 Пользователь замучен на {dur_text}")
+            msg = await update.message.reply_text(f"```\n🔇 Пользователь замучен на {dur_text}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
         except Exception as e:
-            msg = await update.message.reply_text(f"Ошибка: {e}")
+            msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
 
     # Размут
@@ -216,10 +227,10 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update.effective_chat.id, uid,
                 ChatPermissions(can_send_messages=True)
             )
-            msg = await update.message.reply_text("🔊 Пользователь размучен")
+            msg = await update.message.reply_text("```\n🔊 Пользователь размучен\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
         except Exception as e:
-            msg = await update.message.reply_text(f"Ошибка: {e}")
+            msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
 
     # Бан
@@ -229,10 +240,10 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not uid: return
         try:
             await context.bot.ban_chat_member(update.effective_chat.id, uid, revoke_messages=True)
-            msg = await update.message.reply_text("🔨 Пользователь забанен навсегда")
+            msg = await update.message.reply_text("```\n🔨 Пользователь забанен навсегда\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
         except Exception as e:
-            msg = await update.message.reply_text(f"Ошибка: {e}")
+            msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
 
     # Разбан
@@ -242,19 +253,18 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not uid: return
         try:
             await context.bot.unban_chat_member(update.effective_chat.id, uid)
-            msg = await update.message.reply_text("🟢 Пользователь разбанен")
+            msg = await update.message.reply_text("```\n🟢 Пользователь разбанен\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
         except Exception as e:
-            msg = await update.message.reply_text(f"Ошибка: {e}")
+            msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
 
-    # Предупреждение (через точку)
+    # Предупреждение через точку
     elif text.startswith('.пред'):
         await warn_command(update, context)
 
-    # Сброс предупреждений (через точку)
+    # Сброс через точку
     elif text.startswith(('.сброс', '.снять_пред')):
-        # Имитируем команду с аргументами
         parts = text.split()
         if len(parts) > 1:
             context.args = parts[1:]
@@ -264,11 +274,12 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text("⛔ Нет прав.")
+        msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
         asyncio.create_task(delete_after(msg))
         return
     msg = await update.message.reply_text(
-        "✅ Бот-администратор.\n\n"
+        "```\n"
+        "✅ БОТ-АДМИНИСТРАТОР\n\n"
         "Команды (с точкой):\n"
         "• .мут 1мин (ответом)\n"
         "• .мут @username 2ч\n"
@@ -276,12 +287,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• .бан @username\n"
         "• .разбан @username\n"
         "• .пред (ответом) — предупреждения\n"
-        "• .сброс / .снять_пред — сброс предупреждений\n\n"
-        "Система предупреждений:\n"
+        "• .сброс / .снять_пред — сброс и снятие мута\n\n"
+        "СИСТЕМА ПРЕДУПРЕЖДЕНИЙ:\n"
         "1-е — уведомление\n"
         "2-е — мут 30 мин\n"
-        "3-е — мут 2 часа + сброс счётчика\n\n"
-        "Сообщения бота автоматически удаляются через 40 секунд."
+        "3-е — мут 2 часа + сброс\n\n"
+        "Сообщения бота удаляются через 40 сек.\n"
+        "```",
+        parse_mode="Markdown"
     )
     asyncio.create_task(delete_after(msg))
 
@@ -305,7 +318,7 @@ def main():
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    print("✅ Бот запущен с автоудалением сообщений (40 сек).")
+    print("✅ Бот запущен с моноширинными блоками.")
     app.run_polling()
 
 if __name__ == "__main__":
