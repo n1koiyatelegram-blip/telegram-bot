@@ -8,7 +8,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 from telegram import Update, ChatPermissions
-from telegram.ext import Application, CommandHandler, MessageHandler, MessageReactionHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ===== КОНФИГУРАЦИЯ =====
 TOKEN = "8924072551:AAF5hfJNcEA4eRxbcM9sa3nt3-SXgZacmCY"
@@ -16,8 +16,14 @@ ADMIN_ID = 8561804900  # ваш Telegram ID
 
 WARN_FILE = "warnings.json"
 
-# Эмодзи для модерации (можно заменить на 🚫, ⚠️ и т.п.)
-MODERATION_REACTION_EMOJI = '👏'
+# Настройки антиспам-ссылок
+ALLOWED_DOMAINS = [
+    'youtube.com', 'youtu.be', 't.me', 'telegram.me', 
+    'instagram.com', 't.co', 'twitter.com', 'x.com',
+    'github.com', 'stackoverflow.com', 'wikipedia.org'
+]
+BLOCK_SHORT_LINKS = True  # блокировать короткие ссылки (bit.ly и т.д.)
+SHORT_LINK_DOMAINS = ['bit.ly', 'goo.gl', 'tinyurl.com', 'clck.ru', 'shorturl.at', 'ow.ly', 'is.gd', 'buff.ly']
 
 # ===== РАБОТА С ПРЕДУПРЕЖДЕНИЯМИ =====
 def load_warnings():
@@ -113,7 +119,7 @@ async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         asyncio.create_task(delete_after(msg))
         return False
 
-# ===== ПРЕДУПРЕЖДЕНИЯ ПО ID (для реакций и ссылок) =====
+# ===== ВЫДАЧА ПРЕДУПРЕЖДЕНИЯ ПО ID (для спам-ссылок) =====
 async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, reason: str = ""):
     """Выдаёт предупреждение пользователю по ID (без ответа на сообщение)."""
     chat_id = update.effective_chat.id
@@ -172,39 +178,44 @@ async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         save_warnings(warnings)
         await send_log(context, f"⚠️ Третье предупреждение + мут 2 часа для {user_display}")
 
-# ===== ОБРАБОТЧИК РЕАКЦИЙ =====
-async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """При получении реакции 👏 от администратора выдаёт предупреждение автору сообщения."""
-    if not update.message_reaction:
+# ===== ЗАЩИТА ОТ СПАМ-ССЫЛОК =====
+def extract_domain(url: str) -> str:
+    """Извлекает домен из URL (без www)."""
+    parsed = urlparse(url)
+    domain = parsed.netloc or parsed.path
+    domain = domain.replace('www.', '').lower()
+    return domain
+
+async def handle_spam_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет сообщение на нежелательные ссылки, удаляет и выдаёт предупреждение."""
+    if not update.message or not update.message.text:
         return
-    reaction = update.message_reaction
-    if not reaction.new_reaction:
+    # Игнорируем сообщения от самого админа
+    if update.effective_user.id == ADMIN_ID:
         return
-    has_mod = any(r.emoji == MODERATION_REACTION_EMOJI for r in reaction.new_reaction)
-    if not has_mod:
+    text = update.message.text
+    # Ищем URL
+    url_pattern = re.compile(r'https?://\S+|www\.\S+')
+    urls = url_pattern.findall(text)
+    if not urls:
         return
-    reactor = reaction.user
-    if not reactor:
-        return
-    # Проверяем, что поставивший реакцию — администратор группы или владелец бота
-    try:
-        chat_member = await context.bot.get_chat_member(reaction.chat.id, reactor.id)
-        if chat_member.status not in ('administrator', 'creator') and reactor.id != ADMIN_ID:
-            return
-    except Exception:
-        return
-    # Получаем сообщение, на которое поставлена реакция
-    try:
-        msg = await context.bot.get_messages(chat_id=reaction.chat.id, message_ids=reaction.message_id)
-        if not msg:
-            return
-        target_msg = msg[0]
-        author_id = target_msg.from_user.id
-        if author_id == reactor.id:
-            return
-        await warn_user_by_id(update, context, author_id, reason=f"Реакция {MODERATION_REACTION_EMOJI} от администратора")
-    except Exception as e:
-        print(f"Ошибка получения сообщения: {e}")
+    spam = False
+    for url in urls:
+        domain = extract_domain(url)
+        if BLOCK_SHORT_LINKS and domain in SHORT_LINK_DOMAINS:
+            spam = True
+            break
+        if domain not in ALLOWED_DOMAINS:
+            spam = True
+            break
+    if spam:
+        # Удаляем сообщение
+        try:
+            await update.message.delete()
+        except Exception as e:
+            await send_log(context, f"Не удалось удалить сообщение: {e}")
+        # Выдаём предупреждение
+        await warn_user_by_id(update, context, update.effective_user.id, reason="Спам-ссылка (запрещённый домен)")
 
 # ===== ОСТАЛЬНЫЕ КОМАНДЫ =====
 async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -398,7 +409,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text(
             "```\n"
             "⛔ Нет прав.\n\n"
-            "По вопросам: [Мой Telegram](https://t.me/n1koiyaa)\n"
+            "По вопросам: @nikoiyaa\n"
             "```",
             parse_mode="Markdown"
         )
@@ -419,8 +430,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1-е — уведомление\n"
         "2-е — мут 30 мин\n"
         "3-е — мут 2 часа + сброс\n\n"
-        "МОДЕРАЦИЯ ПО РЕАКЦИИ:\n"
-        "Администратор ставит 👏 на сообщение → автор получает предупреждение.\n"
+        "ЗАЩИТА ОТ СПАМ-ССЫЛОК:\n"
+        "Сообщения со ссылками на запрещённые домены удаляются, отправитель получает предупреждение.\n"
         "```\n\n"
         "[Мой Telegram](https://t.me/n1koiyaa)",
         parse_mode="Markdown"
@@ -447,10 +458,11 @@ def main():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
-    # Добавляем обработчик реакций
-    app.add_handler(MessageReactionHandler(handle_reaction))
-    print("✅ Бот запущен с модерацией по реакции 👏.")
+    # Сначала обрабатываем спам-ссылки (чтобы удалить сообщение до обычной обработки)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spam_links), group=1)
+    # Затем обрабатываем команды (мут, пред и т.д.)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command), group=2)
+    print("✅ Бот запущен с защитой от спам-ссылок.")
     app.run_polling()
 
 if __name__ == "__main__":
