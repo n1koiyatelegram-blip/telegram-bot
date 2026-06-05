@@ -183,39 +183,34 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(delete_after(msg))
         return
 
-    # Удаляем сообщение пользователя с командой (если есть права)
+    # Обрабатываем команду
+    success = False  # флаг успешности
     try:
-        await update.message.delete()
-    except Exception:
-        pass  # если нет прав на удаление — просто игнорируем
-
-    # Обработка команд (код тот же, что и раньше)
-    if text.startswith(('.мут', '/mute')):
-        parts = text.split()
-        if len(parts) == 1:
-            uid = await resolve_user_id(update, context)
-            if not uid: return
-            dur = "1h"
-        elif len(parts) == 2:
-            if any(parts[1].endswith(x) for x in ('h','m','s','d','w','ч','мин','сек','д','нед')):
+        if text.startswith(('.мут', '/mute')):
+            parts = text.split()
+            if len(parts) == 1:
                 uid = await resolve_user_id(update, context)
                 if not uid: return
-                dur = parts[1]
+                dur = "1h"
+            elif len(parts) == 2:
+                if any(parts[1].endswith(x) for x in ('h','m','s','d','w','ч','мин','сек','д','нед')):
+                    uid = await resolve_user_id(update, context)
+                    if not uid: return
+                    dur = parts[1]
+                else:
+                    uid = await resolve_user_id(update, context, parts[1])
+                    if not uid: return
+                    dur = "1h"
             else:
                 uid = await resolve_user_id(update, context, parts[1])
                 if not uid: return
-                dur = "1h"
-        else:
-            uid = await resolve_user_id(update, context, parts[1])
-            if not uid: return
-            dur = parts[2]
-        delta, dur_text = parse_duration(dur)
-        if delta is None:
-            msg = await update.message.reply_text(f"```\n❌ {dur_text}\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
-            return
-        until = datetime.utcnow() + delta
-        try:
+                dur = parts[2]
+            delta, dur_text = parse_duration(dur)
+            if delta is None:
+                msg = await update.message.reply_text(f"```\n❌ {dur_text}\n```", parse_mode="Markdown")
+                asyncio.create_task(delete_after(msg))
+                return
+            until = datetime.utcnow() + delta
             await context.bot.restrict_chat_member(
                 update.effective_chat.id, uid,
                 ChatPermissions(can_send_messages=False),
@@ -223,25 +218,62 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             msg = await update.message.reply_text(f"```\n🔇 Пользователь замучен на {dur_text}\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
-        except Exception as e:
-            msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
+            success = True
 
-    elif text.startswith(('.размут', '/unmute')):
-        parts = text.split()
-        uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
-        if not uid: return
-        try:
+        elif text.startswith(('.размут', '/unmute')):
+            parts = text.split()
+            uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
+            if not uid: return
             await context.bot.restrict_chat_member(
                 update.effective_chat.id, uid,
                 ChatPermissions(can_send_messages=True)
             )
             msg = await update.message.reply_text("```\n🔊 Пользователь размучен\n```", parse_mode="Markdown")
             asyncio.create_task(delete_after(msg))
-        except Exception as e:
-            msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
+            success = True
 
+        elif text.startswith(('.бан', '/ban')):
+            parts = text.split()
+            uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
+            if not uid: return
+            await context.bot.ban_chat_member(update.effective_chat.id, uid, revoke_messages=True)
+            msg = await update.message.reply_text("```\n🔨 Пользователь забанен навсегда\n```", parse_mode="Markdown")
+            asyncio.create_task(delete_after(msg))
+            success = True
+
+        elif text.startswith(('.разбан', '/unban')):
+            parts = text.split()
+            uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
+            if not uid: return
+            await context.bot.unban_chat_member(update.effective_chat.id, uid)
+            msg = await update.message.reply_text("```\n🟢 Пользователь разбанен\n```", parse_mode="Markdown")
+            asyncio.create_task(delete_after(msg))
+            success = True
+
+        elif text.startswith('.пред'):
+            await warn_command(update, context)
+            success = True   # warn_command сама отправляет ответ
+
+        elif text.startswith(('.сброс', '.снять_пред')):
+            parts = text.split()
+            if len(parts) > 1:
+                context.args = parts[1:]
+            else:
+                context.args = []
+            await reset_warns(update, context)
+            success = True
+
+    except Exception as e:
+        msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
+        asyncio.create_task(delete_after(msg))
+        # success остаётся False
+
+    # Удаляем сообщение пользователя только если команда успешно выполнена
+    if success:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
     elif text.startswith(('.бан', '/ban')):
         parts = text.split()
         uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
