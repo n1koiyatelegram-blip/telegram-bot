@@ -15,15 +15,31 @@ TOKEN = "8924072551:AAF5hfJNcEA4eRxbcM9sa3nt3-SXgZacmCY"
 ADMIN_ID = 8561804900  # ваш Telegram ID
 
 WARN_FILE = "warnings.json"
+USER_CACHE_FILE = "user_cache.json"
 
-# Настройки антиспам-ссылок
-ALLOWED_DOMAINS = [
-    't.me', 'telegram.me'
-]
+ALLOWED_DOMAINS = ['t.me', 'telegram.me']
 BLOCK_SHORT_LINKS = True
 SHORT_LINK_DOMAINS = ['bit.ly', 'goo.gl', 'tinyurl.com', 'clck.ru', 'shorturl.at']
 
-# ===== РАБОТА С ПРЕДУПРЕЖДЕНИЯМИ =====
+# ===== КЭШ ПОЛЬЗОВАТЕЛЕЙ =====
+def load_user_cache():
+    if os.path.exists(USER_CACHE_FILE):
+        with open(USER_CACHE_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_user_cache(cache):
+    with open(USER_CACHE_FILE, "w") as f:
+        json.dump(cache, f, indent=2)
+
+def update_user_cache(username, user_id):
+    if not username:
+        return
+    cache = load_user_cache()
+    cache[username.lower()] = user_id
+    save_user_cache(cache)
+
+# ===== ПРЕДУПРЕЖДЕНИЯ =====
 def load_warnings():
     if os.path.exists(WARN_FILE):
         with open(WARN_FILE, "r") as f:
@@ -57,23 +73,32 @@ def parse_duration(duration_str: str):
 
 async def resolve_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE, target: str = None):
     if update.message and update.message.reply_to_message:
-        return update.message.reply_to_message.from_user.id
+        user = update.message.reply_to_message.from_user
+        if user.username:
+            update_user_cache(user.username, user.id)
+        return user.id
     if target:
         target = target.strip()
         if target.isdigit():
             return int(target)
         if target.startswith('@'):
-            username = target[1:]
+            username = target[1:].lower()
+            cache = load_user_cache()
+            if username in cache:
+                return cache[username]
             try:
                 admins = await context.bot.get_chat_administrators(update.effective_chat.id)
                 for admin in admins:
-                    if admin.user.username and admin.user.username.lower() == username.lower():
+                    if admin.user.username and admin.user.username.lower() == username:
+                        update_user_cache(admin.user.username, admin.user.id)
                         return admin.user.id
-                msg = await update.message.reply_text(f"```\n❌ Не найден @{username}.\n```", parse_mode="Markdown")
-                asyncio.create_task(delete_after(msg))
-            except Exception as e:
-                msg = await update.message.reply_text(f"```\n❌ Ошибка поиска: {e}\n```", parse_mode="Markdown")
-                asyncio.create_task(delete_after(msg))
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"```\n❌ Не найден @{target}. Убедитесь, что пользователь писал сообщения в чате, или используйте ID.\n```",
+                parse_mode="Markdown"
+            )
             return None
     return None
 
@@ -103,7 +128,11 @@ async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         else:
             dur_text = f"{minutes} минут"
         msg_text = f"```\n{reason}\n🔇 Пользователь замучен на {dur_text}.\n```"
-        msg = await update.message.reply_text(msg_text, parse_mode="Markdown")
+        msg = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=msg_text,
+            parse_mode="Markdown"
+        )
         asyncio.create_task(delete_after(msg))
         user = await context.bot.get_chat(user_id)
         username = f"@{user.username}" if user.username else str(user_id)
@@ -112,8 +141,11 @@ async def apply_mute(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id
         )
         return True
     except Exception as e:
-        msg = await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"```\n❌ Ошибка при муте: {e}\n```",
+            parse_mode="Markdown"
+        )
         return False
 
 async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, reason: str = ""):
@@ -129,7 +161,10 @@ async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, us
 
     try:
         user = await context.bot.get_chat(user_id)
-        user_display = f"@{user.username}" if user.username else f"[{user.first_name}](tg://user?id={user.id})"
+        if user.username:
+            user_display = f"@{user.username}"
+        else:
+            user_display = user.first_name
     except:
         user_display = str(user_id)
 
@@ -138,7 +173,7 @@ async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, us
             f"```\n⚠️ ПРЕДУПРЕЖДЕНИЕ 1/3 для {user_display}\n"
             f"Следующее предупреждение повлечёт мут на 30 минут.\n{reason}\n```"
         )
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
         await send_log(context, f"⚠️ Предупреждение 1/3 для {user_display} (причина: {reason})")
     elif new_count == 2:
         until = datetime.utcnow() + timedelta(minutes=30)
@@ -148,12 +183,17 @@ async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, us
                 ChatPermissions(can_send_messages=False),
                 until_date=until
             )
-            await update.message.reply_text(
-                f"```\n⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3 для {user_display}\n🔇 Пользователь замучен на 30 минут.\n```",
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"```\n⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3 для {user_display}\n🔇 Пользователь замучен на 30 минут.\n```",
                 parse_mode="Markdown"
             )
         except Exception as e:
-            await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"```\n❌ Ошибка при муте: {e}\n```",
+                parse_mode="Markdown"
+            )
         await send_log(context, f"⚠️ Предупреждение 2/3 + мут 30 мин для {user_display}")
     else:
         until = datetime.utcnow() + timedelta(hours=2)
@@ -163,12 +203,17 @@ async def warn_user_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE, us
                 ChatPermissions(can_send_messages=False),
                 until_date=until
             )
-            await update.message.reply_text(
-                f"```\n⚠️⚠️⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ для {user_display}\n🔇 Пользователь замучен на 2 часа.\n```",
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"```\n⚠️⚠️⚠️ ТРЕТЬЕ ПРЕДУПРЕЖДЕНИЕ для {user_display}\n🔇 Пользователь замучен на 2 часа.\n```",
                 parse_mode="Markdown"
             )
         except Exception as e:
-            await update.message.reply_text(f"```\n❌ Ошибка при муте: {e}\n```", parse_mode="Markdown")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"```\n❌ Ошибка при муте: {e}\n```",
+                parse_mode="Markdown"
+            )
         warnings[chat_id_str][str(user_id)] = 0
         save_warnings(warnings)
         await send_log(context, f"⚠️ Третье предупреждение + мут 2 часа для {user_display}")
@@ -199,25 +244,36 @@ async def handle_spam_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
             spam = True
             break
     if spam:
+        await warn_user_by_id(update, context, update.effective_user.id, reason="Спам-ссылка (запрещённый домен)")
         try:
             await update.message.delete()
         except Exception as e:
             await send_log(context, f"Не удалось удалить сообщение: {e}")
-        await warn_user_by_id(update, context, update.effective_user.id, reason="Спам-ссылка (запрещённый домен)")
 
-# ===== КОМАНДЫ =====
+# ===== ОСНОВНЫЕ КОМАНДЫ =====
 async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="```\n⛔ Нет прав.\n```",
+            parse_mode="Markdown"
+        )
         return
     if not update.message.reply_to_message:
-        msg = await update.message.reply_text("```\n❌ Ответьте на сообщение пользователя.\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="```\n❌ Ответьте на сообщение пользователя.\n```",
+            parse_mode="Markdown"
+        )
         return
     user_id = update.message.reply_to_message.from_user.id
     user = update.message.reply_to_message.from_user
-    user_display = f"@{user.username}" if user.username else f"[{user.first_name}](tg://user?id={user.id})"
+    if user.username:
+        update_user_cache(user.username, user_id)
+    if user.username:
+        user_display = f"@{user.username}"
+    else:
+        user_display = user.first_name
     chat_id = str(update.effective_chat.id)
     warnings = load_warnings()
     if chat_id not in warnings:
@@ -233,13 +289,13 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Следующее предупреждение повлечёт мут на 30 минут.\n"
             "```"
         )
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="Markdown")
         await send_log(context, f"⚠️ Предупреждение 1/3 для {user_display}")
     elif new_count == 2:
         await apply_mute(update, context, user_id, timedelta(minutes=30),
                          f"⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3 для {user_display}")
         text = f"```\n⚠️⚠️ Для {user_display} при следующем предупреждении будет выдан мут на 2 часа.\n```"
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode="Markdown")
         await send_log(context, f"⚠️ Предупреждение 2/3 + мут 30 мин для {user_display}")
     else:
         await apply_mute(update, context, user_id, timedelta(hours=2),
@@ -250,16 +306,17 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="```\n⛔ Нет прав.\n```",
+            parse_mode="Markdown"
+        )
         return
     target = None
     if len(context.args) > 0:
         target = context.args[0]
     user_id = await resolve_user_id(update, context, target)
     if not user_id:
-        msg = await update.message.reply_text("```\n❌ Укажите пользователя (ответом или @username/ID).\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
         return
     chat_id = update.effective_chat.id
     try:
@@ -276,20 +333,30 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id_str in warnings and str(user_id) in warnings[chat_id_str]:
         del warnings[chat_id_str][str(user_id)]
         save_warnings(warnings)
-        msg = await update.message.reply_text("```\n✅ Предупреждения сброшены, мут снят.\n```", parse_mode="Markdown")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="```\n✅ Предупреждения сброшены, мут снят.\n```",
+            parse_mode="Markdown"
+        )
         await send_log(context, f"🔄 Сброс предупреждений и снятие мута для {user_display}")
     else:
-        msg = await update.message.reply_text("```\n✅ Мут снят (предупреждений не было).\n```", parse_mode="Markdown")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="```\n✅ Мут снят (предупреждений не было).\n```",
+            parse_mode="Markdown"
+        )
         await send_log(context, f"🔄 Снятие мута для {user_display}")
-    asyncio.create_task(delete_after(msg))
 
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if not text.startswith(('.мут', '.размут', '.бан', '.разбан', '.пред', '.сброс', '.снять_пред')):
         return
     if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text("```\n⛔ Нет прав.\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="```\n⛔ Нет прав.\n```",
+            parse_mode="Markdown"
+        )
         return
     success = False
     try:
@@ -314,8 +381,11 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 dur = parts[2]
             delta, dur_text = parse_duration(dur)
             if delta is None:
-                msg = await update.message.reply_text(f"```\n❌ {dur_text}\n```", parse_mode="Markdown")
-                asyncio.create_task(delete_after(msg))
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"```\n❌ {dur_text}\n```",
+                    parse_mode="Markdown"
+                )
                 return
             until = datetime.utcnow() + delta
             await context.bot.restrict_chat_member(
@@ -323,8 +393,11 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ChatPermissions(can_send_messages=False),
                 until_date=until
             )
-            msg = await update.message.reply_text(f"```\n🔇 Пользователь замучен на {dur_text}\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"```\n🔇 Пользователь замучен на {dur_text}\n```",
+                parse_mode="Markdown"
+            )
             user = await context.bot.get_chat(uid)
             username = f"@{user.username}" if user.username else str(uid)
             await send_log(context, f"🔨 Мут для {username} на {dur_text} в чате {update.effective_chat.title}")
@@ -337,8 +410,11 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update.effective_chat.id, uid,
                 ChatPermissions(can_send_messages=True)
             )
-            msg = await update.message.reply_text("```\n🔊 Пользователь размучен\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="```\n🔊 Пользователь размучен\n```",
+                parse_mode="Markdown"
+            )
             user = await context.bot.get_chat(uid)
             username = f"@{user.username}" if user.username else str(uid)
             await send_log(context, f"🔊 Снятие мута с {username} в чате {update.effective_chat.title}")
@@ -348,8 +424,11 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
             if not uid: return
             await context.bot.ban_chat_member(update.effective_chat.id, uid, revoke_messages=True)
-            msg = await update.message.reply_text("```\n🔨 Пользователь забанен навсегда\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="```\n🔨 Пользователь забанен навсегда\n```",
+                parse_mode="Markdown"
+            )
             user = await context.bot.get_chat(uid)
             username = f"@{user.username}" if user.username else str(uid)
             await send_log(context, f"🔨 Бан {username} в чате {update.effective_chat.title}")
@@ -359,8 +438,11 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
             if not uid: return
             await context.bot.unban_chat_member(update.effective_chat.id, uid)
-            msg = await update.message.reply_text("```\n🟢 Пользователь разбанен\n```", parse_mode="Markdown")
-            asyncio.create_task(delete_after(msg))
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="```\n🟢 Пользователь разбанен\n```",
+                parse_mode="Markdown"
+            )
             user = await context.bot.get_chat(uid)
             username = f"@{user.username}" if user.username else str(uid)
             await send_log(context, f"🟢 Разбан {username} в чате {update.effective_chat.title}")
@@ -377,30 +459,35 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await reset_warns(update, context)
             success = True
     except Exception as e:
-        msg = await update.message.reply_text(f"```\n❌ Ошибка: {e}\n```", parse_mode="Markdown")
-        asyncio.create_task(delete_after(msg))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"```\n❌ Ошибка: {e}\n```",
+            parse_mode="Markdown"
+        )
     if success:
         try:
             await update.message.delete()
         except Exception:
             pass
 
+async def update_cache(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message and update.message.from_user and update.message.from_user.username:
+        update_user_cache(update.message.from_user.username, update.message.from_user.id)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        msg = await update.message.reply_text(
-            "```\n"
-            "⛔ Нет прав.\n\n"
-            "По вопросам: [Мой Telegram](https://t.me/ваш_username)\n"
-            "```",
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="```\n⛔ Нет прав.\n\nПо вопросам: [Мой Telegram](https://t.me/ваш_username)\n```",
             parse_mode="Markdown"
         )
-        asyncio.create_task(delete_after(msg))
         return
-    msg = await update.message.reply_text(
-        "```\n"
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="```\n"
         "✅ БОТ-АДМИНИСТРАТОР\n\n"
         "Команды (с точкой):\n"
-        "• .мут 1мин (ответом)\n"
+        "• .мут 1мин (ответом или @username)\n"
         "• .мут @username 2ч\n"
         "• .размут @username\n"
         "• .бан @username\n"
@@ -418,6 +505,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+# ===== ВЕБ-СЕРВЕР =====
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -437,9 +525,10 @@ def main():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, update_cache), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spam_links), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command), group=2)
-    print("✅ Бот запущен с защитой от спам-ссылок.")
+    print("✅ Бот запущен с исправленной обработкой Markdown.")
     app.run_polling()
 
 if __name__ == "__main__":
