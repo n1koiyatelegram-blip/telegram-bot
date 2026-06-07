@@ -216,8 +216,39 @@ async def handle_spam_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await send_log(context, f"Не удалось удалить сообщение: {e}")
 
-# ===== КОМАНДЫ =====
-async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ===== ОСНОВНЫЕ КОМАНДЫ (английские, но с русскими текстами) =====
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⛔ Нет прав.\n\nПо вопросам: [Мой Telegram](https://t.me/n1koiya)",
+            parse_mode="Markdown"
+        )
+        return
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="✅ *БОТ-АДМИНИСТРАТОР*\n\n"
+        "Команды:\n"
+        "• `/mute 1ч` (ответом на сообщение) или `/mute @username 2ч`\n"
+        "• `/unmute @username`\n"
+        "• `/ban @username`\n"
+        "• `/unban @username`\n"
+        "• `/warn` (ответом на сообщение) – выдать предупреждение\n"
+        "• `/reset @username` – сбросить предупреждения и снять мут\n"
+        "• `/help` – эта справка\n\n"
+        "*СИСТЕМА ПРЕДУПРЕЖДЕНИЙ:*\n"
+        "1-е – уведомление\n"
+        "2-е – мут 30 мин + предупреждение о третьем\n"
+        "3-е – мут 2 часа + сброс счётчика\n\n"
+        "*ЗАЩИТА ОТ СПАМ-ССЫЛОК:*\n"
+        "Запрещённые ссылки удаляются, отправитель получает предупреждение.",
+        parse_mode="Markdown"
+    )
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await cmd_start(update, context)
+
+async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id not in warn_locks:
         warn_locks[chat_id] = asyncio.Lock()
@@ -226,13 +257,12 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat_id, text="⛔ Нет прав.")
             return
         if not update.message.reply_to_message:
-            await context.bot.send_message(chat_id=chat_id, text="❌ Ответьте на сообщение пользователя.")
+            await context.bot.send_message(chat_id=chat_id, text="❌ Ответьте на сообщение пользователя, чтобы выдать предупреждение.\nПример: `/warn` в ответ на сообщение.")
             return
         user_id = update.message.reply_to_message.from_user.id
         user = update.message.reply_to_message.from_user
         if user.username:
             update_user_cache(user.username, user_id)
-        if user.username:
             user_display = f"@{user.username}"
         else:
             user_display = user.first_name
@@ -246,7 +276,7 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_warnings(warnings)
 
         if new_count == 1:
-            text = f"⚠️ ПРЕДУПРЕЖДЕНИЕ 1/3 для {user_display}\nСледующее предупреждение повлечёт мут на 30 минут."
+            text = f"⚠️ ПРЕДУПРЕЖДЕНИЕ 1/3 для {user_display}\nСледующее предупреждение → мут 30 минут."
             await context.bot.send_message(chat_id=chat_id, text=text)
             await send_log(context, f"⚠️ Предупреждение 1/3 для {user_display}")
         elif new_count == 2:
@@ -255,7 +285,7 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = (
                     f"⚠️ ПРЕДУПРЕЖДЕНИЕ 2/3 для {user_display}\n"
                     f"🔇 Пользователь замучен на 30 минут.\n"
-                    f"⚠️⚠️ При следующем предупреждении будет выдан мут на 2 часа."
+                    f"⚠️⚠️ Следующее предупреждение → мут 2 часа."
                 )
                 await context.bot.send_message(chat_id=chat_id, text=text)
                 await send_log(context, f"⚠️ Предупреждение 2/3 + мут 30 мин для {user_display}")
@@ -268,7 +298,7 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             warnings[chat_id_str][str(user_id)] = 0
             save_warnings(warnings)
 
-async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="⛔ Нет прав.")
         return
@@ -277,6 +307,8 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = context.args[0]
     user_id = await resolve_user_id(update, context, target)
     if not user_id:
+        if not context.args:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Укажите пользователя: `/reset @username` или ответьте на его сообщение.")
         return
     chat_id = update.effective_chat.id
     try:
@@ -296,127 +328,106 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text="✅ Мут снят (предупреждений не было).")
         await send_log(context, f"🔄 Снятие мута для {user_display}")
 
-async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Проверка, что это текстовое сообщение
-    if update.message is None:
-        return
-    text = update.message.text.strip()
-    if not text.startswith(('.мут', '.размут', '.бан', '.разбан', '.пред', '.сброс', '.снять_пред')):
-        return
+async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="⛔ Нет прав.")
         return
-    success = False
-    try:
-        if text.startswith(('.мут', '/mute')):
-            parts = text.split()
-            if len(parts) == 1:
-                uid = await resolve_user_id(update, context)
-                if not uid: return
-                dur = "1h"
-            elif len(parts) == 2:
-                if any(parts[1].endswith(x) for x in ('h','m','s','d','w','ч','мин','сек','д','нед')):
-                    uid = await resolve_user_id(update, context)
-                    if not uid: return
-                    dur = parts[1]
-                else:
-                    uid = await resolve_user_id(update, context, parts[1])
-                    if not uid: return
-                    dur = "1h"
-            else:
-                uid = await resolve_user_id(update, context, parts[1])
-                if not uid: return
-                dur = parts[2]
-            delta, dur_text = parse_duration(dur)
-            if delta is None:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ {dur_text}")
+    user_id = None
+    duration_str = "1h"
+    if len(context.args) >= 1:
+        if context.args[0].startswith('@') or context.args[0].isdigit():
+            user_id = await resolve_user_id(update, context, context.args[0])
+            if len(context.args) >= 2:
+                duration_str = context.args[1]
+        else:
+            user_id = await resolve_user_id(update, context)
+            if not user_id:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Ответьте на сообщение пользователя или укажите @username.\nПример: `/mute @username 1ч`")
                 return
-            until = datetime.utcnow() + delta
-            await context.bot.restrict_chat_member(update.effective_chat.id, uid, ChatPermissions(can_send_messages=False), until_date=until)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"🔇 Пользователь замучен на {dur_text}")
-            user = await context.bot.get_chat(uid)
-            username = f"@{user.username}" if user.username else str(uid)
-            await send_log(context, f"🔨 Мут для {username} на {dur_text} в чате {update.effective_chat.title}")
-            success = True
-        elif text.startswith(('.размут', '/unmute')):
-            parts = text.split()
-            uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
-            if not uid: return
-            await context.bot.restrict_chat_member(update.effective_chat.id, uid, ChatPermissions(can_send_messages=True))
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="🔊 Пользователь размучен")
-            user = await context.bot.get_chat(uid)
-            username = f"@{user.username}" if user.username else str(uid)
-            await send_log(context, f"🔊 Снятие мута с {username} в чате {update.effective_chat.title}")
-            success = True
-        elif text.startswith(('.бан', '/ban')):
-            parts = text.split()
-            uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
-            if not uid: return
-            await context.bot.ban_chat_member(update.effective_chat.id, uid, revoke_messages=True)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="🔨 Пользователь забанен навсегда")
-            user = await context.bot.get_chat(uid)
-            username = f"@{user.username}" if user.username else str(uid)
-            await send_log(context, f"🔨 Бан {username} в чате {update.effective_chat.title}")
-            success = True
-        elif text.startswith(('.разбан', '/unban')):
-            parts = text.split()
-            uid = await resolve_user_id(update, context, parts[1] if len(parts)>1 else None)
-            if not uid: return
-            await context.bot.unban_chat_member(update.effective_chat.id, uid)
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="🟢 Пользователь разбанен")
-            user = await context.bot.get_chat(uid)
-            username = f"@{user.username}" if user.username else str(uid)
-            await send_log(context, f"🟢 Разбан {username} в чате {update.effective_chat.title}")
-            success = True
-        elif text.startswith('.пред'):
-            await warn_command(update, context)
-            success = True
-        elif text.startswith(('.сброс', '.снять_пред')):
-            parts = text.split()
-            if len(parts) > 1:
-                context.args = parts[1:]
-            else:
-                context.args = []
-            await reset_warns(update, context)
-            success = True
+            duration_str = context.args[0]
+    else:
+        user_id = await resolve_user_id(update, context)
+        if not user_id:
+            await context.bot.send_message(chat_id=update.efficient_chat.id, text="❌ Ответьте на сообщение пользователя, чтобы замутить его.\nПример: `/mute 1ч` (ответом)")
+            return
+    delta, dur_text = parse_duration(duration_str)
+    if delta is None:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ {dur_text}")
+        return
+    until = datetime.utcnow() + delta
+    try:
+        await context.bot.restrict_chat_member(update.effective_chat.id, user_id, ChatPermissions(can_send_messages=False), until_date=until)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"🔇 Пользователь замучен на {dur_text}")
+        user = await context.bot.get_chat(user_id)
+        username = f"@{user.username}" if user.username else str(user_id)
+        await send_log(context, f"🔨 Мут для {username} на {dur_text} в чате {update.effective_chat.title}")
     except Exception as e:
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Ошибка: {e}")
-    if success:
-        try:
-            await update.message.delete()
-        except Exception:
-            pass
+
+async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="⛔ Нет прав.")
+        return
+    user_id = None
+    if len(context.args) > 0:
+        user_id = await resolve_user_id(update, context, context.args[0])
+    else:
+        user_id = await resolve_user_id(update, context)
+    if not user_id:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Укажите пользователя: `/unmute @username` или ответьте на его сообщение.")
+        return
+    try:
+        await context.bot.restrict_chat_member(update.effective_chat.id, user_id, ChatPermissions(can_send_messages=True))
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="🔊 Пользователь размучен")
+        user = await context.bot.get_chat(user_id)
+        username = f"@{user.username}" if user.username else str(user_id)
+        await send_log(context, f"🔊 Снятие мута с {username} в чате {update.effective_chat.title}")
+    except Exception as e:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Ошибка: {e}")
+
+async def cmd_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="⛔ Нет прав.")
+        return
+    user_id = None
+    if len(context.args) > 0:
+        user_id = await resolve_user_id(update, context, context.args[0])
+    else:
+        user_id = await resolve_user_id(update, context)
+    if not user_id:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Укажите пользователя: `/ban @username` или ответьте на его сообщение.")
+        return
+    try:
+        await context.bot.ban_chat_member(update.effective_chat.id, user_id, revoke_messages=True)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="🔨 Пользователь забанен навсегда")
+        user = await context.bot.get_chat(user_id)
+        username = f"@{user.username}" if user.username else str(user_id)
+        await send_log(context, f"🔨 Бан {username} в чате {update.effective_chat.title}")
+    except Exception as e:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Ошибка: {e}")
+
+async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="⛔ Нет прав.")
+        return
+    if not context.args:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Укажите пользователя: `/unban @username`")
+        return
+    user_id = await resolve_user_id(update, context, context.args[0])
+    if not user_id:
+        return
+    try:
+        await context.bot.unban_chat_member(update.effective_chat.id, user_id)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="🟢 Пользователь разбанен")
+        user = await context.bot.get_chat(user_id)
+        username = f"@{user.username}" if user.username else str(user_id)
+        await send_log(context, f"🟢 Разбан {username} в чате {update.effective_chat.title}")
+    except Exception as e:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Ошибка: {e}")
 
 async def update_cache(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.from_user and update.message.from_user.username:
         update_user_cache(update.message.from_user.username, update.message.from_user.id)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="⛔ Нет прав.\n\nПо вопросам: [Мой Telegram](https://t.me/n1koiya)"
-        )
-        return
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="✅ *БОТ-АДМИНИСТРАТОР*\n\n"
-        "Команды (с точкой):\n"
-        "• `.мут 1мин` (ответом или @username)\n"
-        "• `.мут @username 2ч`\n"
-        "• `.размут @username`\n"
-        "• `.бан @username`\n"
-        "• `.разбан @username`\n"
-        "• `.пред` (ответом) — предупреждения\n"
-        "• `.сброс` / `.снять_пред` — сброс и снятие мута\n\n"
-        "*СИСТЕМА ПРЕДУПРЕЖДЕНИЙ:*\n"
-        "1-е — уведомление\n"
-        "2-е — мут 30 мин\n"
-        "3-е — мут 2 часа + сброс\n\n"
-        "*ЗАЩИТА ОТ СПАМ-ССЫЛОК:*\n"
-        "Сообщения со ссылками на запрещённые домены удаляются, отправитель получает предупреждение.",
-        parse_mode="Markdown"
-    )
 
 # ===== ВЕБ-СЕРВЕР =====
 class Handler(BaseHTTPRequestHandler):
@@ -437,11 +448,20 @@ def main():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
-    app.add_handler(CommandHandler("start", start))
+    
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("warn", cmd_warn))
+    app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("mute", cmd_mute))
+    app.add_handler(CommandHandler("unmute", cmd_unmute))
+    app.add_handler(CommandHandler("ban", cmd_ban))
+    app.add_handler(CommandHandler("unban", cmd_unban))
+    
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, update_cache), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spam_links), group=1)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command), group=2)
-    print("✅ Бот запущен. Второе предупреждение – одним сообщением.")
+    
+    print("✅ Бот запущен. Команды английские, тексты русские.")
     app.run_polling()
 
 if __name__ == "__main__":
