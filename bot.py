@@ -114,7 +114,6 @@ async def send_log(context: ContextTypes.DEFAULT_TYPE, text: str):
     await context.bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode="Markdown")
 
 async def apply_mute_only(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, duration: timedelta):
-    """Только выдача мута, без отправки сообщения в чат. Возвращает True при успехе."""
     until = datetime.utcnow() + duration
     try:
         await context.bot.restrict_chat_member(
@@ -298,6 +297,9 @@ async def reset_warns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_log(context, f"🔄 Снятие мута для {user_display}")
 
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверка, что это текстовое сообщение
+    if update.message is None:
+        return
     text = update.message.text.strip()
     if not text.startswith(('.мут', '.размут', '.бан', '.разбан', '.пред', '.сброс', '.снять_пред')):
         return
@@ -439,7 +441,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, update_cache), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_spam_links), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command), group=2)
-    print("✅ Бот запущен. Второе предупреждение — одним сообщением.")
+    print("✅ Бот запущен. Второе предупреждение – одним сообщением.")
     app.run_polling()
 
 if __name__ == "__main__":
